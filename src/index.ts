@@ -4,6 +4,12 @@ import cors from 'cors';
 import { authRouter } from './auth.js';      // ← NEW
 
 const app = express();
+const allowedOrigins = (process.env.CORS_ORIGIN ?? '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+app.use(cors({ origin: allowedOrigins }));
 
 app.use(cors({ origin: process.env.CORS_ORIGIN }));
 app.use(express.json());

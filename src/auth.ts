@@ -1,19 +1,21 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { OAuth2Client } from 'google-auth-library';
 import { prisma } from './db.js';
 
 export const authRouter = Router();
 
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// ---------- REGISTER ----------
 authRouter.post('/register', async (req, res) => {
   const { username, phone, password } = req.body ?? {};
 
-  // 1 — is anything missing?
   if (!username || !phone || !password) {
     return res.status(400).json({ message: "Barcha maydonlarni to'ldiring" });
   }
 
-  // 2 — clean the phone: "+998 90 123 45 67" → "998901234567"
   const cleanPhone = String(phone).replace(/\D/g, '');
   if (!/^998\d{9}$/.test(cleanPhone)) {
     return res.status(400).json({ message: "Telefon raqam noto'g'ri" });
@@ -24,22 +26,18 @@ authRouter.post('/register', async (req, res) => {
   }
 
   try {
-    // 3 — scramble the password (never save the real one)
     const passwordHash = await bcrypt.hash(String(password), 10);
 
-    // 4 — write the user into Supabase
     const user = await prisma.users.create({
       data: { username, phone: cleanPhone, password_hash: passwordHash },
     });
 
-    // 5 — make the ticket
     const token = jwt.sign(
       { userId: user.id },
       process.env.JWT_SECRET as string,
       { expiresIn: '7d' }
     );
 
-    // 6 — answer in the shape the frontend expects
     res.status(201).json({
       token,
       user: { id: user.id, username: user.username, phone: user.phone },
@@ -50,5 +48,60 @@ authRouter.post('/register', async (req, res) => {
     }
     console.error(err);
     res.status(500).json({ message: 'Server xatosi' });
+  }
+});
+
+// ---------- GOOGLE ----------
+authRouter.post('/google', async (req, res) => {
+  const { idToken } = req.body ?? {};
+  if (!idToken) {
+    return res.status(400).json({ message: 'idToken kerak' });
+  }
+
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    if (!payload?.sub) {
+      return res.status(401).json({ message: "Google token noto'g'ri" });
+    }
+
+    const googleId = payload.sub;
+    const email = payload.email ?? null;
+    const name = payload.name || email?.split('@')[0] || 'User';
+
+    let user = await prisma.users.findFirst({ where: { google_id: googleId } });
+
+    if (!user && email) {
+      const byEmail = await prisma.users.findFirst({ where: { email } });
+      if (byEmail) {
+        user = await prisma.users.update({
+          where: { id: byEmail.id },
+          data: { google_id: googleId },
+        });
+      }
+    }
+
+    if (!user) {
+      user = await prisma.users.create({
+        data: { username: name, email, google_id: googleId },
+      });
+    }
+
+    const token = jwt.sign(
+      { userId: user.id },
+      process.env.JWT_SECRET as string,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      token,
+      user: { id: user.id, username: user.username, phone: user.phone },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(401).json({ message: 'Google orqali kirishda xatolik' });
   }
 });
