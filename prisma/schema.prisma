@@ -47,11 +47,13 @@ model messages {
 model users {
   id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   username      String
-  phone         String         @unique
-  password_hash String
+  phone         String?        @unique
+  password_hash String?
   avatar_color  String         @default("#0EA5E9")
   status        String         @default("offline")
   created_at    DateTime       @default(now()) @db.Timestamptz(6)
+  email         String?        @unique
+  google_id     String?        @unique
   chat_members  chat_members[]
   messages      messages[]
 }
