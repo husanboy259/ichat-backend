@@ -29,7 +29,12 @@ authRouter.post('/register', async (req, res) => {
     const passwordHash = await bcrypt.hash(String(password), 10);
 
     const user = await prisma.users.create({
-      data: { username, phone: cleanPhone, password_hash: passwordHash },
+      // trim() matters: without it "Ali " and "Ali" become two different people
+      data: {
+        username: String(username).trim(),
+        phone: cleanPhone,
+        password_hash: passwordHash,
+      },
     });
 
     const token = jwt.sign(
@@ -49,6 +54,40 @@ authRouter.post('/register', async (req, res) => {
     console.error(err);
     res.status(500).json({ message: 'Server xatosi' });
   }
+});
+
+// ---------- LOGIN ----------
+authRouter.post('/login', async (req, res) => {
+  const { phone, password } = req.body ?? {};
+
+  if (!phone || !password) {
+    return res.status(400).json({ message: 'Telefon va parolni kiriting' });
+  }
+
+  // Same cleaning as register, or "+998 90..." would never match "99890..."
+  const cleanPhone = String(phone).replace(/\D/g, '');
+
+  const user = await prisma.users.findFirst({ where: { phone: cleanPhone } });
+
+  // No user, or a Google-only account with no password set
+  if (!user || !user.password_hash) {
+    return res.status(401).json({ message: "Telefon yoki parol noto'g'ri" });
+  }
+
+  const ok = await bcrypt.compare(String(password), user.password_hash);
+  if (!ok) {
+    // Same message on purpose — never reveal which half was wrong
+    return res.status(401).json({ message: "Telefon yoki parol noto'g'ri" });
+  }
+
+  const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET as string, {
+    expiresIn: '7d',
+  });
+
+  res.json({
+    token,
+    user: { id: user.id, username: user.username, phone: user.phone },
+  });
 });
 
 // ---------- GOOGLE ----------
